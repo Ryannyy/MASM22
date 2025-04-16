@@ -1,0 +1,270 @@
+
+```{r}
+library(ggplot2)
+library(readxl)
+library(tidyverse); theme_set(theme_bw() + theme(text = element_text(size = 18)))
+library(car)
+library(rstatix)
+library(GGally)
+library(dplyr)
+library(knitr)
+library(corrplot)
+library(MASS)
+library(broom)
+setwd("E:/R")
+carotene <- read_excel("data/carotene.xlsx")
+```
+
+```{r}
+data<-carotene
+data$smokstat <- factor(data$smokstat, labels = c("Never", "Former", "Current"))
+data$sex <- factor(data$sex, labels = c("Male", "Female"))
+data$vituse <- factor(data$vituse, labels = c("Often", "Rarely", "No"))
+# According to Wikipedia, the molecular formula of beta-carotene is C40H56, and the molar mass is 536.87 g/mol.
+cut_off <- 0.42 * 536.87
+cut_off
+
+quantile(data$betaplasma, probs = 0.75)
+data$logbetaplasma<-log(data$betaplasma)
+
+```
+Part 1.
+```{r}
+# Creating binary variables
+data <- data |> 
+  mutate(
+    lowplasma_01 = as.numeric(betaplasma < 225.5),
+    lowplasma_h1 = factor(lowplasma_01,
+      levels = c(0, 1),
+      labels = c("high", "low")
+    )
+  )
+
+# lowplasma vs. bmi plot
+ggplot(data = data) +
+  geom_point(aes(x = bmi, y = lowplasma_01, color = lowplasma_h1)) +
+  scale_color_manual(values = c("high" = "red", "low" = "blue"))  # Manually specify colors
+```
+
+
+```{r}
+# frequency and proportion
+count_table <- data |> 
+  count(lowplasma_h1) |> 
+  mutate(Proportion = n / sum(n) * 100)
+
+kable(count_table, caption = "Distribution of plasma β-carotene concentration")
+```
+
+
+```{r}
+# Generate 3x2 frequency table and calculate probability, odds and odds ratio
+table_1c <- data |> 
+  count(vituse, lowplasma_h1) |> 
+  pivot_wider(
+    id_cols = vituse,
+    names_from = lowplasma_h1,
+    values_from = n
+  ) |> 
+  mutate(
+    Total = high + low,
+    P_low = low / Total,
+    Odds = P_low / (1 - P_low),
+    OR = Odds / Odds[vituse == "No"]  # Refrence is "No"
+  )
+
+kable(table_1c, caption = "Relationship between vituse and low concentrations（Table.1(c)）")
+```
+
+
+```{r}
+# Fit model (reference category is "No")
+data$vituse <- relevel(data$vituse, ref = "No")
+model_1d <- glm(lowplasma_01 ~ vituse, data = data, family = binomial)
+
+# Parameters and confidence intervals
+summary_model <- summary(model_1d)
+coef_table <- data.frame(
+  Beta = coef(model_1d),
+  OR = exp(coef(model_1d)),
+  CI_Lower = exp(confint(model_1d)[, 1]),
+  CI_Upper = exp(confint(model_1d)[, 2])
+)
+
+kable(coef_table, caption = "Logistic regression results（Model.1(d)）")
+```
+
+
+```{r}
+# Likelihood Ratio Test
+null_model <- glm(lowplasma_01 ~ 1, data = data, family = binomial)
+lrt_result <- anova(null_model, model_1d, test = "LRT")
+
+cat("Test results：\n",
+    "Chi-squared statistic =", lrt_result$Deviance[2], "\n",
+    "P-value =", lrt_result$`Pr(>Chi)`[2])
+```
+Part 2.
+```{r}
+# Scatter plot and add a moving average
+ggplot(data, aes(x = bmi, y = lowplasma_01, color = lowplasma_h1)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE, color = "black", linetype = "dashed") +
+  scale_color_manual(values = c("high" = "red", "low" = "blue")) +
+  labs(
+    title = "the probability of low plasma β-carotene vs. BMI",
+    x = "BMI (kg/m²)", 
+    y = "The probability of low plasma β-carotene",
+    color = "concentration"
+  ) +
+  theme_minimal()
+
+# Fitting a logistic regression model（Model.2(a)）
+model_2a <- glm(lowplasma_01 ~ bmi, data = data, family = binomial)
+
+# Parameters and confidence intervals
+coef_table <- data.frame(
+  Beta = coef(model_2a),
+  OR = exp(coef(model_2a)),
+  CI_Lower = exp(confint(model_2a)[, 1]),
+  CI_Upper = exp(confint(model_2a)[, 2])
+)
+kable(coef_table, caption = "Logistic Regression Resuolts（Model.2(a)）")
+
+# Effects of changes in BMI（+1, -1, -10）
+beta <- coef(model_2a)["bmi"]
+beta_ci <- confint(model_2a)["bmi", ]
+
+delta <- c(1, -1, -10)
+
+OR_changes <- exp(beta * delta)
+CI_Lower <- exp(beta_ci[1] * delta)
+CI_Upper <- exp(beta_ci[2] * delta)
+
+# Results
+result_table <- data.frame(
+  Change = c("+1", "-1", "-10"),
+  OR = round(OR_changes, 2),
+  CI_Lower = round(CI_Lower, 2),
+  CI_Upper = round(CI_Upper, 2)
+)
+kable(result_table, caption = "OR and confidence interval when BMI changes")
+```
+
+```{r}
+# Predicted probabilities
+new_data <- data.frame(bmi = seq(min(data$bmi), max(data$bmi), length.out = 100))
+predictions <- predict(model_2a, newdata = new_data, type = "link", se.fit = TRUE)
+new_data$prob <- plogis(predictions$fit)
+new_data$lower <- plogis(predictions$fit - 1.96 * predictions$se.fit)
+new_data$upper <- plogis(predictions$fit + 1.96 * predictions$se.fit)
+
+# Plotting predicted probabilities
+ggplot(data, aes(x = bmi, y = lowplasma_01)) +
+  geom_point(aes(color = lowplasma_h1), alpha = 0.5) +
+  geom_ribbon(data = new_data, aes(y = prob, ymin = lower, ymax = upper), alpha = 0.2) +
+  geom_line(data = new_data, aes(y = prob), color = "black") +
+  scale_color_manual(values = c("high" = "red", "low" = "blue")) +
+  labs(
+    title = "Prediction of low concentration probability",
+    x = "BMI (kg/m²)", 
+    y = "Low concentration probability"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Wald test results
+summary_model <- summary(model_2a)
+wald_stat <- summary_model$coefficients["bmi", "z value"]
+wald_p <- summary_model$coefficients["bmi", "Pr(>|z|)"]
+
+cat("Wald test results：\n",
+    "statistic =", round(wald_stat, 3), "\n",
+    "P-value =", format.pval(wald_p, digits = 3), "\n")
+
+# Null-model
+null_model <- glm(lowplasma_01 ~ 1, data = data, family = binomial)
+lrt_result <- anova(null_model, model_2a, test = "LRT")
+
+cat("Likelihood ratio test results：\n",
+    "Chi-squared statistic =", lrt_result$Deviance[2], "\n",
+    "P-value =", format.pval(lrt_result$`Pr(>Chi)`[2], digits = 3), "\n")
+```
+
+```{r}
+# Leverage for logistic regression
+leverage_logistic <- influence(model_2a)$hat
+
+# Leverage for linear regression
+model_linear <- lm(lowplasma_01 ~ bmi, data = data)
+leverage_linear <- hatvalues(model_linear)
+
+# Comparison
+ggplot(data, aes(x = bmi)) +
+  geom_point(aes(y = leverage_logistic, color = "Logistic"), alpha = 0.7) +
+  geom_point(aes(y = leverage_linear, color = "Linear"), alpha = 0.7) +
+  geom_hline(yintercept = 2 * (2 + 1) / nrow(data), linetype = "dashed", color = "grey") +
+  scale_color_manual(values = c("Logistic" = "red", "Linear" = "blue")) +
+  labs(
+    title = "Comparison of leverage of BMI（logistic vs linear）",
+    x = "BMI (kg/m²)", 
+    y = "Leverage",
+    color = "Model"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Standardized residuals
+std_residuals <- rstandard(model_2a)
+
+# Plotting residuals
+ggplot(data, aes(x = bmi, y = std_residuals, color = lowplasma_h1)) +
+  geom_point() +
+  geom_hline(yintercept = c(-3, -2, 0, 2, 3), linetype = "dashed", color = "gray") +
+  scale_color_manual(values = c("high" = "red", "low" = "blue")) +
+  labs(
+    title = "Standardized residuals vs BMI",
+    x = "BMI (kg/m²)", 
+    y = "Standardized residuals",
+    color = "Concentration"
+  ) +
+  theme_minimal()
+
+# Observations with residual outside [-2,2]
+outliers <- data[abs(std_residuals) > 2, ]
+cat("Observations with large residual：\n")
+print(outliers[, c("bmi", "lowplasma_h1")])
+```
+
+```{r}
+# Cook distance
+cook_dist <- cooks.distance(model_2a)
+
+# Plot Cook distance
+ggplot(data, aes(x = bmi, y = cook_dist, color = lowplasma_h1)) +
+  geom_point() +
+  geom_hline(yintercept = 4 / nrow(data), linetype = "dashed", color = "grey") +
+  scale_color_manual(values = c("high" = "red", "low" = "blue")) +
+  labs(
+    title = "Cook distance vs BMI",
+    x = "BMI (kg/m²)", 
+    y = "Cook distance",
+    color = "concentration"
+  ) +
+  theme_minimal()
+
+# The most influential observation
+top_influence <- data[which.max(cook_dist), ]
+cat("The most influential observation：\n")
+print(top_influence[, c("bmi", "lowplasma_h1")])
+```
+
+
+
+
+
+
+
+
