@@ -20,6 +20,7 @@ data<-carotene
 data$smokstat <- factor(data$smokstat, labels = c("Never", "Former", "Current"))
 data$sex <- factor(data$sex, labels = c("Male", "Female"))
 data$vituse <- factor(data$vituse, labels = c("Often", "Rarely", "No"))
+data$vituse <- relevel(data$vituse, ref = "Often")
 # According to Wikipedia, the molecular formula of beta-carotene is C40H56, and the molar mass is 536.87 g/mol.
 cut_off <- 0.42 * 536.87
 cut_off
@@ -70,7 +71,7 @@ table_1c <- data |>
     Total = high + low,
     P_low = low / Total,
     Odds = P_low / (1 - P_low),
-    OR = Odds / Odds[vituse == "No"]  # Refrence is "No"
+    OR = Odds / Odds[vituse == "Often"]  # Reference is "Often"
   )
 
 kable(table_1c, caption = "Relationship between vituse and low concentrations（Table.1(c)）")
@@ -78,21 +79,85 @@ kable(table_1c, caption = "Relationship between vituse and low concentrations（
 
 
 ```{r}
-# Fit model (reference category is "No")
-data$vituse <- relevel(data$vituse, ref = "No")
+# Fit logistic model (reference category is "Often")
+data$vituse <- relevel(data$vituse, ref = "Often")
 model_1d <- glm(lowplasma_01 ~ vituse, data = data, family = binomial)
 
 # Parameters and confidence intervals
 summary_model <- summary(model_1d)
 coef_table <- data.frame(
   Beta = coef(model_1d),
+  CI_Lower_Beta = confint(model_1d)[, 1],
+  CI_Upper_Beta = confint(model_1d)[, 2],
   OR = exp(coef(model_1d)),
-  CI_Lower = exp(confint(model_1d)[, 1]),
-  CI_Upper = exp(confint(model_1d)[, 2])
+  CI_Lower_OR = exp(confint(model_1d)[, 1]),
+  CI_Upper_OR = exp(confint(model_1d)[, 2])
 )
 
 kable(coef_table, caption = "Logistic regression results（Model.1(d)）")
+
 ```
+```{r}
+# Model parameter
+beta_intercept_often <- coef(model_1d)["(Intercept)"]
+beta_no <- coef(model_1d)["vituseNo"]
+beta_rarely <- coef(model_1d)["vituseRarely"]
+
+# log odds
+log_odds_often <- beta_intercept_often
+log_odds_no <- beta_intercept_often + beta_no
+log_odds_rarely <- beta_intercept_often + beta_rarely
+
+# odds and probabilities
+odds_often <- exp(log_odds_often)
+odds_no <- exp(log_odds_no)
+odds_rarely <- exp(log_odds_rarely)
+
+prob_often <- plogis(log_odds_often)
+prob_no <- plogis(log_odds_no)
+prob_rarely <- plogis(log_odds_rarely)
+
+model_predictions <- data.frame(
+  vituse = c("Often", "Rarely", "No"),
+  Model_Odds = c(odds_often, odds_rarely, odds_no),
+  Model_Probability = c(prob_often, prob_rarely, prob_no)
+)
+
+#confidence interval
+# make predictions
+new_data <- data.frame(vituse = c("Often", "Rarely", "No"))
+
+# predict log odds and CI
+predictions <- predict(model_1d, newdata = new_data, type = "link", se.fit = TRUE)
+log_odds <- predictions$fit
+log_odds_se <- predictions$se.fit
+
+log_odds_upper <- log_odds + 1.96 * log_odds_se
+log_odds_lower <- log_odds - 1.96 * log_odds_se
+
+# odds and probabilities CI
+odds <- exp(log_odds)
+odds_upper <- exp(log_odds_upper)
+odds_lower <- exp(log_odds_lower)
+
+prob <- odds/(1+odds)
+prob_upper <- odds_upper/(1+odds_upper)
+prob_lower <- odds_lower/(1+odds_lower)
+
+# Results
+prediction_table <- data.frame(
+  vituse = new_data$vituse,
+  Predictor = log_odds,
+  Predictor_CI = sprintf("[%.2f, %.2f]", log_odds_lower, log_odds_upper),
+  Odds = odds,
+  Odds_CI = sprintf("[%.2f, %.2f]", odds_lower, odds_upper),
+  Probability = prob,
+  Probability_CI = sprintf("[%.2f, %.2f]", prob_lower, prob_upper)
+)
+
+kable(prediction_table, caption = "Prediction eesults for model 1(d)")
+```
+
 
 
 ```{r}
