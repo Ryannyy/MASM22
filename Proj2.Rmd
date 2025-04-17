@@ -325,6 +325,138 @@ top_influence <- data[which.max(cook_dist), ]
 cat("The most influential observation：\n")
 print(top_influence[, c("bmi", "lowplasma_h1")])
 ```
+Part 3
+```{r}
+#full model with calories
+full_model <- glm(
+  lowplasma_01 ~ bmi + age + calories + fat + cholesterol + fiber + alcohol + betadiet + 
+    smokstat + sex + vituse,
+  data = data,
+  family = binomial
+)
+
+# VIF
+library(car)
+vif_values <- vif(full_model)
+vif_table <- data.frame(
+  GVIF = vif_values[, "GVIF"],
+  `GVIF^(1/(2*Df))` = vif_values[, "GVIF^(1/(2*Df))"]
+)
+kable(vif_table, caption = "VIF for full model (with calories)")
+```
+So we still need to remove calories
+```{r}
+reduced_model <- update(full_model, . ~ . - calories)
+```
+
+Model selection
+```{r}
+# remove calories
+vars <- c("bmi", "age", "fat", "cholesterol", "fiber", "alcohol", "betadiet", 
+          "smokstat", "sex", "vituse")
+
+# full modle for all variables and two-way interactions
+full_interaction_model <- glm(
+  lowplasma_01 ~ (bmi + age + fat + cholesterol + fiber + alcohol + betadiet + 
+                   smokstat + sex + vituse)^2,
+  data = data,
+  family = binomial
+)
+```
+```{r}
+# backward
+backward_model <- step(
+  full_interaction_model,
+  direction = "backward",
+  scope = list(lower = ~1, upper = formula(full_interaction_model)),
+  k = log(nrow(data))
+)
+```
+
+
+
+```{r}
+# null model
+null_model <- glm(lowplasma_01 ~ 1, data = data, family = binomial)
+
+# forward
+forward_model <- step(
+  null_model,
+  direction = "forward",
+  scope = formula(full_interaction_model),
+  k = log(nrow(data))
+)
+```
+
+```{r}
+# the result
+stepwise_model <- step(
+  backward_model,
+  direction = "both",
+  scope = list(lower = formula(null_model), upper = formula(full_interaction_model)),
+  k = log(nrow(data)))
+```
+Model comparison
+```{r}
+library(pscl)
+
+# McFadden R2
+get_model_metrics <- function(model) {
+  data.frame(
+    McFadden_R2 = pR2(model)["McFadden"],
+    AIC = AIC(model),
+    BIC = BIC(model)
+  )
+}
+
+# all models
+metrics_table <- rbind(
+  "Full Interaction" = get_model_metrics(full_interaction_model),
+  "Backward" = get_model_metrics(backward_model),
+  "Forward" = get_model_metrics(forward_model),
+  "Stepwise" = get_model_metrics(stepwise_model)
+)
+kable(metrics_table, caption = "Comparison")
+```
+Residuals
+```{r}
+# Best model, but this is not the only answer, backward model is also good
+best_model <- forward_model
+
+# Standardized residuals
+std_residuals <- rstandard(best_model)
+
+# plots for residuals
+ggplot(data, aes(x = predict(best_model, type = "link"), y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = c(-3, -2, 0, 2, 3), linetype = "dashed", color = "red") +
+  labs(
+    title = "Standardized residuals vs Predictions",
+    x = "Predictions",
+    y = "Standardized residuals"
+  )
+
+# QQ plot
+qqnorm(std_residuals)
+qqline(std_residuals, col = "red")
+```
+
+```{r}
+coef_table <- data.frame(
+  Beta = coef(best_model),
+  OR = exp(coef(best_model)),
+  CI_Lower = exp(confint(best_model)[, 1]),
+  CI_Upper = exp(confint(best_model)[, 2])
+)
+kable(coef_table, caption = "Best model parameter estimates")
+```
+
+
+
+
+
+
+
 
 
 
