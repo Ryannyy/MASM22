@@ -422,7 +422,7 @@ kable(metrics_table, caption = "Comparison")
 ```
 Residuals
 ```{r}
-# Best model, but this is not the only answer, stepwise model is also good
+# Best model in BIC
 best_model <- forward_model
 
 # Standardized residuals
@@ -463,7 +463,34 @@ ggplot(data, aes(x = predict(best_model, type = "link"), y = std_pearson_residua
 qqnorm(std_pearson_residuals)
 qqline(std_pearson_residuals, col = "red")
 ```
+
+```{r}
+# Best model in AIC
+best_model <- stepwise_model
+
+# Standardized residuals
+std_residuals <- rstandard(best_model)/(1-influence(best_model)$hat)
 ```
+
+
+```{r}
+# plots for pearson residuals
+ggplot(data, aes(x = predict(best_model, type = "link"), y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = c(-3, -2, 0, 2, 3), linetype = "dashed", color = "red") +
+  labs(
+    title = "Standardized deviance residuals vs Predictions",
+    x = "Predictions",
+    y = "Standardized deviance residuals"
+  )
+
+# QQ plot
+qqnorm(std_residuals)
+qqline(std_residuals, col = "red")
+```
+```
+
+
 
 
 ```{r}
