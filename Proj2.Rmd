@@ -18,7 +18,9 @@ carotene <- read_excel("data/carotene.xlsx")
 ```{r}
 data<-carotene
 data$smokstat <- factor(data$smokstat, labels = c("Never", "Former", "Current"))
+data$smokstat <- relevel(data$smokstat, ref = "Never")
 data$sex <- factor(data$sex, labels = c("Male", "Female"))
+data$sex <- relevel(data$sex, ref = "Female")
 data$vituse <- factor(data$vituse, labels = c("Often", "Rarely", "No"))
 data$vituse <- relevel(data$vituse, ref = "Often")
 # According to Wikipedia, the molecular formula of beta-carotene is C40H56, and the molar mass is 536.87 g/mol.
@@ -420,26 +422,49 @@ kable(metrics_table, caption = "Comparison")
 ```
 Residuals
 ```{r}
-# Best model, but this is not the only answer, backward model is also good
+# Best model, but this is not the only answer, stepwise model is also good
 best_model <- forward_model
 
 # Standardized residuals
-std_residuals <- rstandard(best_model)
+std_residuals <- rstandard(best_model)/(1-influence(best_model)$hat)
+```
 
-# plots for residuals
+
+```{r}
+# plots for pearson residuals
 ggplot(data, aes(x = predict(best_model, type = "link"), y = std_residuals)) +
   geom_point() +
   geom_hline(yintercept = c(-3, -2, 0, 2, 3), linetype = "dashed", color = "red") +
   labs(
-    title = "Standardized residuals vs Predictions",
+    title = "Standardized deviance residuals vs Predictions",
     x = "Predictions",
-    y = "Standardized residuals"
+    y = "Standardized deviance residuals"
   )
 
 # QQ plot
 qqnorm(std_residuals)
 qqline(std_residuals, col = "red")
 ```
+```{r}
+# Standardized pearson residuals
+std_pearson_residuals<-rstandard(best_model,type="pearson") / sqrt(1 - influence(best_model)$hat)
+
+# plots for deviace residuals
+ggplot(data, aes(x = predict(best_model, type = "link"), y = std_pearson_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = c(-3, -2, 0, 2, 3), linetype = "dashed", color = "red") +
+  labs(
+    title = "Standard pearson residuals vs Predictions",
+    x = "Predictions",
+    y = "Standard pearson residuals"
+  )
+
+# QQ plot
+qqnorm(std_pearson_residuals)
+qqline(std_pearson_residuals, col = "red")
+```
+```
+
 
 ```{r}
 coef_table <- data.frame(
