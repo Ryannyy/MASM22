@@ -392,12 +392,35 @@ forward_model <- step(
 
 ```{r}
 # the result
-stepwise_model <- step(
+stepwise_model_1 <- step(
+  forward_model,
+  direction = "both",
+  scope = list(lower = formula(null_model), upper = formula(full_interaction_model)),
+  k = log(nrow(data)))
+
+stepwise_model_2 <- step(
   backward_model,
   direction = "both",
   scope = list(lower = formula(null_model), upper = formula(full_interaction_model)),
   k = log(nrow(data)))
 ```
+
+```{r}
+new_data <- data
+new_data$vituse <- factor(
+  ifelse(new_data$vituse %in% c("Often", "Rarely"), "Yes", "No"),
+  levels = c("Yes", "No")
+)
+model_5<-glm(lowplasma_01 ~ betadiet + bmi + vituse + age + betadiet:bmi,
+             family = binomial,
+             data = new_data)
+
+model_6<-glm(lowplasma_01 ~ bmi + age + fat + cholesterol + fiber + betadiet + 
+    fat:betadiet + cholesterol:betadiet + fiber:betadiet + bmi:betadiet,
+    family = binomial,
+    data = new_data)
+```
+
 Model comparison
 ```{r}
 library(pscl)
@@ -413,10 +436,12 @@ get_model_metrics <- function(model) {
 
 # all models
 metrics_table <- rbind(
-  "Full Interaction" = get_model_metrics(full_interaction_model),
-  "Backward" = get_model_metrics(backward_model),
-  "Forward" = get_model_metrics(forward_model),
-  "Stepwise" = get_model_metrics(stepwise_model)
+  "Model 1" = get_model_metrics(full_interaction_model),
+  "Model 2" = get_model_metrics(backward_model),
+  "Model 3" = get_model_metrics(stepwise_model_2),
+  "Model 4" = get_model_metrics(forward_model),
+  "Model 5" = get_model_metrics(stepwise_model_1),
+  "Model 6" = get_model_metrics(model_5)
 )
 kable(metrics_table, caption = "Comparison")
 ```
@@ -488,7 +513,6 @@ ggplot(data, aes(x = predict(best_model, type = "link"), y = std_residuals)) +
 qqnorm(std_residuals)
 qqline(std_residuals, col = "red")
 ```
-```
 
 
 
@@ -502,6 +526,108 @@ coef_table <- data.frame(
 )
 kable(coef_table, caption = "Best model parameter estimates")
 ```
+Part 4
+```{r}
+library(caret)
+library(pROC)
+best_BIC <- model_5
+best_AIC <- stepwise_model_2
+data |> mutate(
+  p_AIC = predict(best_AIC, type = "response"),
+  p_BIC = predict(best_BIC, type = "response"), 
+) -> pred_phat
+
+pred_phat |> mutate(
+  yhat_AIC = factor(p_AIC > 0.5,
+                     levels = c(FALSE, TRUE),
+                     labels = c("high", "low"))) -> pred_phat
+
+pred_phat |> mutate(
+  yhat_BIC = factor(p_BIC > 0.5,
+                     levels = c(FALSE, TRUE),
+                     labels = c("high", "low"))) -> pred_phat
+```
+
+```{r}
+cm_AIC <- confusionMatrix(
+  data = pred_phat$yhat_AIC, 
+  reference = pred_phat$lowplasma_h1,
+  positive = "low")
+cm_AIC
+
+cm_BIC <- confusionMatrix(
+  data = pred_phat$yhat_BIC, 
+  reference = pred_phat$lowplasma_h1,
+  positive = "low")
+cm_BIC
+
+```
+
+```{r}
+roc_AIC <- roc(lowplasma_h1 ~ p_AIC, data = pred_phat)
+roc_BIC <- roc(lowplasma_h1 ~ p_BIC, data = pred_phat)
+
+ggroc(list(AIC = roc_AIC, BIC = roc_BIC),
+      linewidth = 1) +
+  coord_fixed() +
+  labs(title = "ROC-curves for all the models") 
+```
+
+```{r}
+aucs <- 
+  data.frame(
+    model = c("AIC", "BIC"),
+    auc = c(auc(roc_AIC), auc(roc_BIC)),
+    lwr = c(ci(roc_AIC)[1], ci(roc_BIC)[1]),
+    upr = c(ci(auc(roc_AIC))[3], ci(auc(roc_BIC))[3])
+  )
+aucs
+
+roc.test(roc_AIC, roc_BIC)
+```
+
+```{r}
+topleft_AIC <- coords(roc_AIC, "best", best.method = "closest.topleft")
+topleft_BIC <- coords(roc_BIC, "best", best.method = "closest.topleft")
+topleft_AIC
+topleft_BIC
+```
+
+```{r}
+pred_phat |> mutate(
+  yhat_AIC2 = factor(p_AIC > topleft_AIC$threshold,
+                     levels = c(FALSE, TRUE),
+                     labels = c("high", "low"))) -> pred_phat
+
+pred_phat |> mutate(
+  yhat_BIC2 = factor(p_BIC > topleft_BIC$threshold,
+                     levels = c(FALSE, TRUE),
+                     labels = c("high", "low"))) -> pred_phat
+
+cm_AIC2 <- confusionMatrix(
+  data = pred_phat$yhat_AIC2, 
+  reference = pred_phat$lowplasma_h1,
+  positive = "low")
+cm_AIC2
+
+cm_BIC2 <- confusionMatrix(
+  data = pred_phat$yhat_BIC2, 
+  reference = pred_phat$lowplasma_h1,
+  positive = "low")
+cm_BIC2
+```
+
+```{r}
+exp(best_BIC$coefficients)
+exp(confint(best_BIC))
+```
+
+
+
+
+
+
+
 
 
 
