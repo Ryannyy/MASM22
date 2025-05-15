@@ -1,0 +1,166 @@
+
+```{r}
+library(ggplot2)
+library(readxl)
+library(tidyverse); theme_set(theme_bw() + theme(text = element_text(size = 18)))
+library(car)
+library(rstatix)
+library(GGally)
+library(dplyr)
+library(knitr)
+library(corrplot)
+library(MASS)
+library(broom)
+library(caret)
+
+setwd("E:/R")
+carotene <- read_excel("data/carotene.xlsx")
+data<-carotene
+data$smokstat <- factor(data$smokstat, labels = c("Never", "Former", "Current"))
+data$smokstat <- relevel(data$smokstat, ref = "Never")
+data$sex <- factor(data$sex, labels = c("Male", "Female"))
+data$sex <- relevel(data$sex, ref = "Female")
+data$vituse <- factor(data$vituse, labels = c("Often", "Rarely", "No"))
+data$vituse <- relevel(data$vituse, ref = "Often")
+```
+
+
+```{r}
+data |> mutate(
+plasma_category = cut(carotene$betaplasma, breaks = c(0, 50, 225, 1600), include.lowest = TRUE),
+plasma_c = factor(plasma_category,
+levels = c("[0,50]", "(50,225]", "(225,1.6e+03]"),
+labels = c(0, 1, 2))) -> data
+```
+
+
+```{r}
+summary(data)
+```
+
+
+```{r}
+model.null <- polr(plasma_c ~ 1, data = data)
+sum.null <- summary(model.null)
+sum.null
+
+```
+
+
+```{r}
+model.full_calories <- polr(plasma_c ~ bmi + age + calories + fat + cholesterol + fiber + alcohol + betadiet + 
+    smokstat + sex + vituse, data = data)
+sum.full <- summary(model.full_calories)
+sum.full
+
+vif(model.full_calories)
+```
+
+
+```{r}
+#so we still need to remove calories
+model.full<- polr(plasma_c ~ bmi + age + fat + cholesterol + fiber + alcohol + betadiet + 
+    smokstat + sex + vituse, data = data)
+sum.full <- summary(model.full)
+sum.full
+
+vif(model.full)
+```
+```{r}
+model_lm.intereaction <- lm(betaplasma ~ (bmi + age + fat + cholesterol + fiber + alcohol + betadiet + 
+    smokstat + sex + vituse)^2, data = data)
+
+summary(model_lm.intereaction)
+``` 
+
+
+```{r}
+#variable selection, we can not form a model with full intereaction due to sample deficiencies in some intereactions, so we did a linear model to find some intereactions that are significant to betaplasma.
+model.intereaction <- polr(plasma_c ~ bmi + age + fat + cholesterol + fiber + alcohol + betadiet + 
+    smokstat + sex + vituse + age:betadiet + fiber:vituse + alcohol:vituse + smokstat:vituse, data = data)
+```
+
+
+```{r}
+# backward
+backward_model <- step(
+  model.intereaction,
+  direction = "backward",
+  scope = list(lower = ~1, upper = formula(model.intereaction)),
+  k = log(nrow(data))
+)
+```
+
+
+```{r}
+# forward
+forward_model <- step(
+  model.null,
+  direction = "forward",
+  scope = list(lower = ~1, upper = formula(model.intereaction)),
+  k = log(nrow(data))
+)
+```
+```{r}
+#backstep
+backstep_model <- step(
+  backward_model,
+  direction = "both",
+  scope = list(lower = ~1, upper = formula(model.intereaction)),
+  k = log(nrow(data))
+)
+
+```
+
+
+```{r}
+#forstep
+forstep_model <- step(
+  forward_model,
+  direction = "both",
+  scope = list(lower = ~1, upper = formula(model.intereaction)),
+  k = log(nrow(data))
+)
+
+```
+All these selections lead to one model.
+
+```{r}
+new_data <- data
+new_data$vituse <- factor(
+  ifelse(new_data$vituse %in% c("Often", "Rarely"), "Yes", "No"),
+  levels = c("Yes", "No")
+)
+
+reduced_model <- polr(plasma_c ~ vituse + betadiet + bmi +cholesterol + age,
+                      data = new_data)
+```
+```{r}
+#model comparison
+library(pscl)
+library(performance)
+library(DescTools)
+
+# McFadden R2
+get_model_metrics <- function(model) {
+  data.frame(
+    adj_McFadden = r2_mcfadden(model)$R2_adjusted,
+    McFadden_R2 = pR2(model)["McFadden"],
+    AIC = AIC(model),
+    BIC = BIC(model)
+  )
+}
+
+# all models
+metrics_table <- rbind(
+  "Full Model" = get_model_metrics(model.intereaction),
+  "Stepwise" = get_model_metrics(forstep_model),
+  "Reduced" = get_model_metrics(reduced_model)
+)
+kable(metrics_table, caption = "Comparison")
+```
+```
+
+
+
+
