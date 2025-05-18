@@ -40,7 +40,7 @@ summary(data)
 
 
 ```{r}
-model.null <- polr(plasma_c ~ 1, data = data)
+model.null <- polr(plasma_category ~ 1, data = data)
 sum.null <- summary(model.null)
 sum.null
 
@@ -48,7 +48,7 @@ sum.null
 
 
 ```{r}
-model.full_calories <- polr(plasma_c ~ bmi + age + calories + fat + cholesterol + fiber + alcohol + betadiet + 
+model.full_calories <- polr(plasma_category ~ bmi + age + calories + fat + cholesterol + fiber + alcohol + betadiet + 
     smokstat + sex + vituse, data = data)
 sum.full <- summary(model.full_calories)
 sum.full
@@ -59,7 +59,7 @@ vif(model.full_calories)
 
 ```{r}
 #so we still need to remove calories
-model.full<- polr(plasma_c ~ bmi + age + fat + cholesterol + fiber + alcohol + betadiet + 
+model.full<- polr(plasma_category ~ bmi + age + fat + cholesterol + fiber + alcohol + betadiet + 
     smokstat + sex + vituse, data = data)
 sum.full <- summary(model.full)
 sum.full
@@ -76,7 +76,7 @@ summary(model_lm.intereaction)
 
 ```{r}
 #variable selection, we can not form a model with full intereaction due to sample deficiencies in some intereactions, so we did a linear model to find some intereactions that are significant to betaplasma.
-model.intereaction <- polr(plasma_c ~ bmi + age + fat + cholesterol + fiber + alcohol + betadiet + 
+model.intereaction <- polr(plasma_category ~ bmi + age + fat + cholesterol + fiber + alcohol + betadiet + 
     smokstat + sex + vituse + age:betadiet + fiber:vituse + alcohol:vituse + smokstat:vituse, data = data)
 ```
 
@@ -132,7 +132,7 @@ new_data$vituse <- factor(
   levels = c("Yes", "No")
 )
 
-reduced_model <- polr(plasma_c ~ vituse + betadiet + bmi +cholesterol + age,
+reduced_model <- polr(plasma_category ~ vituse + betadiet + bmi +cholesterol + age,
                       data = new_data)
 ```
 ```{r}
@@ -159,6 +159,214 @@ metrics_table <- rbind(
 )
 kable(metrics_table, caption = "Comparison")
 ```
+
+```{r}
+cbind(beta = reduced_model$coefficients, 
+      expbeta = exp(reduced_model$coefficients),
+      exp(confint(reduced_model)))
+model.final <- reduced_model
+```
+```{r}
+cbind(zeta = reduced_model$zeta, 
+      expzeta = exp(reduced_model$zeta))
+```
+
+```{r}
+D_0 <- model.null$deviance
+df_0 <- model.null$edf
+
+info <- cbind(aic = AIC(model.null, model.final),
+              bic = BIC(model.null, model.final),
+              R2D = c(1 - 1, 
+                      1 - model.final$deviance/D_0),
+              R2D.adj = c(1 - 1, 
+                          1 - (model.final$deviance + model.final$edf - df_0)/D_0))
+round(info, digits = 3)
+```
+```{r}
+anova(model.null, model.final)
+```
+
+```{r}
+new_data |> mutate(yhat = predict(model.final)) -> pred.final
+
+confusionMatrix(data = pred.final$yhat,
+                reference = pred.final$plasma_category)
+```
+
+
+```{r}
+#multinomial logistic regression
+library(nnet)
+library(caret)
+```
+
+```{r}
+data |> count(plasma_category)
+```
+```{r}
+data_multi <- data
+data_multi |> mutate(plasma_category = relevel(plasma_category, ref = "(50,225]")) ->
+  data_multi
+```
+
+```{r}
+model.null_multi <- multinom(plasma_category ~ 1, data = data_multi)
+sum_multi.null <- summary(model.null_multi)
+sum_multi.null
+```
+
+```{r}
+model.full_multi <- multinom(plasma_category ~ bmi + age + fat + cholesterol + fiber + alcohol + betadiet + smokstat + sex + vituse + age:betadiet + fiber:vituse + alcohol:vituse + smokstat:vituse, data = data_multi)
+sum_multi.full <- summary(model.full_multi)
+sum_multi.full
+
+```
+
+```{r}
+# backward selection
+model.back_multi <- step(
+  model.full_multi,
+  direction = "backward",
+  scope = list(lower = ~1, upper = formula(model.full_multi)),
+  k = log(nrow(data_multi))
+)
+summary(model.back_multi)
+```
+```{r}
+# forward selection
+model.for_multi <- step(
+  model.null_multi,
+  direction = "forward",
+  scope = list(lower = ~1, upper = formula(model.full_multi)),
+  k = log(nrow(data_multi))
+)
+summary(model.for_multi)
+```
+
+```{r}
+#backstep 
+model.backstep_multi <- step(
+  model.back_multi,
+  direction = "both",
+  scope = list(lower = ~1, upper = formula(model.full_multi)),
+  k = log(nrow(data_multi))
+)
+summary(model.backstep_multi)
+```
+
+```{r}
+#forstep 
+model.forstep_multi <- step(
+  model.for_multi,
+  direction = "both",
+  scope = list(lower = ~1, upper = formula(model.full_multi)),
+  k = log(nrow(data_multi))
+)
+summary(model.forstep_multi)
+```
+```{r}
+new_data_multi <- data_multi
+new_data_multi$vituse <- factor(
+  ifelse(new_data_multi$vituse %in% c("Often", "Rarely"), "Yes", "No"),
+  levels = c("Yes", "No")
+)
+ model.red_multi <- multinom(plasma_category ~ bmi + age + cholesterol + 
+    alcohol + betadiet + smokstat + vituse + alcohol:vituse + 
+    smokstat:vituse, data = new_data_multi)
+sum.red_multi <- summary(model.red_multi)
+sum.red_multi
+```
+
+```{r}
+model.final_multi<-model.red_multi
+sum.final_multi<-sum.red_multi
+
+beta <- sum.final_multi$coefficients
+se.beta <- sum.final_multi$standard.errors
+z.value <- beta/se.beta
+P.value <- pnorm(abs(z.value), lower.tail = FALSE)
+ci_beta <- confint(model.final_multi)
+OR <- exp(beta)
+ci_OR <- exp(ci_beta)
+beta
+ci_OR
+```
+
+```{r}
+beta_0_50 <- cbind(
+  beta = round(beta["[0,50]", ], digits = 2),
+  P.value = round(P.value["[0,50]", ], digits = 3),
+  OR = round(OR["[0,50]", ], digits = 2),
+  round(ci_OR[, , "[0,50]"], digits = 2))
+
+beta_0_50
+```
+
+```{r}
+beta_225_1600 <- cbind(
+  beta = round(beta["(225,1.6e+03]", ], digits = 2),
+  P.value = round(P.value["(225,1.6e+03]", ], digits = 3),
+  OR = round(OR["(225,1.6e+03]", ], digits = 2),
+  round(ci_OR[, , "(225,1.6e+03]"], digits = 2))
+
+beta_225_1600
+```
+
+```{r}
+info_multi <- cbind(aic = AIC(model.null_multi, model.final_multi, model.full_multi),
+              bic = BIC(model.null_multi, model.final_multi, model.full_multi))
+D_0 <- model.null_multi$deviance
+df_0 <- model.null_multi$edf
+info_multi$r2 <- round(c(
+  1 - model.null_multi$deviance/D_0,
+  1 - model.final_multi$deviance/D_0,
+  1 - model.full_multi$deviance/D_0), digits = 3)
+
+info_multi$r2.adj <- round(c(
+  1 - (model.null_multi$deviance + (model.null_multi$edf - df_0))/D_0,
+  1 - (model.final_multi$deviance + (model.final_multi$edf - df_0))/D_0,
+  1 - (model.full_multi$deviance + (model.full_multi$edf - df_0))/D_0),
+  digits = 3)
+
+info_multi
+
+```
+
+```{r}
+new_data_multi |>
+  mutate(
+    p = predict(model.final_multi, type = "probs"),
+    yhat = predict(model.final_multi)) -> pred.final_multi
+
+confusionMatrix(data = pred.final_multi$yhat, 
+                reference = pred.final_multi$plasma_category)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ```
 
 
